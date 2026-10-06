@@ -1,0 +1,25 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {openStore} from '../src/core/store.js';
+import {createService} from '../src/core/service.js';
+import {requireAdmin,sameOrigin,rateLimit} from '../src/core/security.js';
+import {accessHtml,homeHtml} from '../src/core/views.js';
+import config from '../src/core/config.js';
+process.env.APP_URL='http://localhost:3000';
+process.env.OWNER_EMAIL='operator@example.com';
+process.env.REVIEWER_EMAIL='reviewer@example.com';
+const sample={"name": "Alex Doe", "email": "alex@example.com", "role": "member"};
+function fixture(deliver){const store=openStore(':memory:');const sent=[];const app=createService({store,deliver:deliver|| (async message=>{sent.push(message);return {providerId:'test-provider-id',status:'accepted'}})});return {app,store,sent,close:()=>store.close()}}
+test('invalid fields do not create a record or email',async()=>{const f=fixture();try{await assert.rejects(()=>f.app.submit({...sample,email:'not-an-address'}));assert.equal(f.store.records(config.kind).length,0);assert.equal(f.sent.length,0)}finally{f.close()}});
+test('cross-origin mutations and missing operator credentials are denied',()=>{assert.throws(()=>sameOrigin(new Headers({origin:'https://other.example'})));const old=process.env.ADMIN_PASSWORD;process.env.ADMIN_PASSWORD='test-password-at-least-16';try{assert.throws(()=>requireAdmin(new Headers()));requireAdmin(new Headers({authorization:'Basic '+Buffer.from('admin:test-password-at-least-16').toString('base64')}))}finally{if(old===undefined)delete process.env.ADMIN_PASSWORD;else process.env.ADMIN_PASSWORD=old}});
+test('limits are enforced from persistent SQLite counters',()=>{const store=openStore(':memory:');try{rateLimit(store.db,'sample',2);rateLimit(store.db,'sample',2);assert.throws(()=>rateLimit(store.db,'sample',2),/Too many/)}finally{store.close()}});
+test('opening the link does not consume it and redemption is single-use',async()=>{const f=fixture();try{await f.app.submit(sample);const url=f.sent[0].text.match(/http:\/\/localhost:3000\/access\/([A-Za-z0-9_-]+)/);assert.ok(url);const token=url[1];assert.ok(f.app.access(token));assert.ok(f.app.access(token));const result=await f.app.redeem(token);assert.match(result.message,/accepted/);await assert.rejects(()=>f.app.redeem(token),/invalid, expired, or already used/)}finally{f.close()}});
+test('expired links cannot be redeemed',async()=>{const f=fixture();try{await f.app.submit(sample);const token=f.sent[0].text.match(/access\/([A-Za-z0-9_-]+)/)[1];f.store.db.prepare('UPDATE tokens SET expires_at=0').run();await assert.rejects(()=>f.app.redeem(token),/expired/)}finally{f.close()}});
+
+test('email failure preserves the workflow and is available for an explicit retry',async()=>{let fail=true;const f=fixture(async()=>{if(fail)throw Object.assign(new Error('Provider refused credentials'),{uncertain:false});return {providerId:'retry-id',status:'accepted'}});try{const record=await f.app.submit(sample); assert.equal(f.store.records(config.kind).length,1);assert.equal(f.store.db.prepare('SELECT status FROM outbox LIMIT 1').get().status,'failed');fail=false;await f.app.retryFailed();assert.equal(f.store.db.prepare('SELECT status FROM outbox LIMIT 1').get().status,'accepted')}finally{f.close()}});
+test('uncertain sends are not automatically retried',async()=>{let attempts=0;const f=fixture(async()=>{attempts++;throw Object.assign(new Error('Timed out after sending'),{uncertain:true})});try{const record=await f.app.submit(sample); const before=attempts;await f.app.retryFailed();assert.equal(attempts,before);assert.equal(f.store.db.prepare('SELECT status FROM outbox LIMIT 1').get().status,'unknown')}finally{f.close()}});
+test('queued mail carries the record reference without exposing submitted content as metadata',async()=>{const f=fixture();try{const result=await f.app.submit(sample);assert.ok(f.sent.length);for(const mail of f.sent){assert.equal(mail.customVariables.record_id,result.id);assert.equal(mail.headers['X-Workflow-Reference'],result.id);assert.equal(mail.customVariables.workflow,config.kind);assert.ok(mail.category.startsWith(config.kind+'.'));assert.equal('email' in mail.customVariables,false)}}finally{f.close()}});
+
+test('a flush drains messages queued while another send is in flight',async()=>{let release;const waiting=new Promise(r=>release=r);let calls=0;const f=fixture(async()=>{if(++calls===1)await waiting;return {status:'accepted',providerId:'x'}});try{f.store.queue('first',{to:['a@example.com'],subject:'a',text:'a'});const flushing=f.app.flush();f.store.queue('second',{to:['b@example.com'],subject:'b',text:'b'});release();await flushing;assert.equal(calls,2);assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM outbox WHERE status='accepted'").get().n,2)}finally{f.close()}});
+
+test('workflow supplies hosted template variables',async()=>{const f=fixture();try{const result=await f.app.submit(sample);assert.equal(f.sent[0].templateVariables.name,sample.name);assert.ok(f.sent[0].templateVariables.invite_url.includes('/access/'));assert.equal(f.sent[0].templateVariables.role,sample.role);}finally{f.close()}});

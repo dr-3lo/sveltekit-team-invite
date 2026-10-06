@@ -1,0 +1,9 @@
+{
+  "email_template": {
+    "name": "Team Invite",
+    "subject": "Your Studio Workspace invitation",
+    "category": "invite.invite",
+    "body_text": "Hello {{name}},\nYou are invited as a {{role}}. Accept within {{expires_in}}:\n{{invite_url}}",
+    "body_html": "<pre>Hello {{name}},\nYou are invited as a {{role}}. Accept within {{expires_in}}:\n{{invite_url}}</pre>"
+  }
+}

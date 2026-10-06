@@ -1,0 +1,49 @@
+export default {
+  "id": 8,
+  "title": "Team Invite",
+  "framework": "SvelteKit",
+  "transport": "api",
+  "details": [],
+  "projects": [],
+  "actions": [],
+  "capacity": 0,
+  "adminOnly": true,
+  "hideForm": false,
+  "publicList": false,
+  "formNote": "Your details are used only to handle this request.",
+  "kind": "invite",
+  "eyebrow": "ONE TEAM",
+  "headline": "Make room for someone new.",
+  "description": "Invite a colleague to the studio workspace. Each invitation can be accepted once and expires after 24 hours.",
+  "button": "Send invitation",
+  "fields": [
+    {
+      "name": "name",
+      "label": "Your name",
+      "type": "text"
+    },
+    {
+      "name": "email",
+      "label": "Email address",
+      "type": "email"
+    },
+    {
+      "name": "role",
+      "label": "Workspace role",
+      "type": "select",
+      "options": [
+        {
+          "value": "member",
+          "label": "Member"
+        },
+        {
+          "value": "editor",
+          "label": "Editor"
+        }
+      ]
+    }
+  ],
+  "success": "The invitation is saved.",
+  "accent": "#94612d",
+  "batch": false
+};
